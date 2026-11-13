@@ -43,3 +43,18 @@ test("the storage banner shows for a client that connects during the outage", as
   await setup.ready
   await waitForFrame(setup, (text) => text.includes("Can't save to disk: database or disk is full"))
 })
+
+test("the storage banner stays hidden for a blip that recovers within a second", async () => {
+  await using state = await tmpdir()
+  await using setup = await createAppFixture({ state: state.path })
+  await setup.ready
+  await setup.waitForFrame((frame) => frame.includes("commands"))
+
+  setup.events.emit({ id: "evt_storage_blip", created: 1, type: "server.storage.updated", data: unavailable })
+  setup.events.emit({ id: "evt_storage_back", created: 2, type: "server.storage.updated", data: { status: "ok" } })
+  const started = Date.now()
+  while (Date.now() - started < 1_500) {
+    expect(setup.captureCharFrame()).not.toContain("Can't save to disk")
+    await Bun.sleep(50)
+  }
+})
