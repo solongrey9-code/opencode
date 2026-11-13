@@ -71,6 +71,20 @@ export class ServiceUnavailableError extends Schema.TaggedError<ServiceUnavailab
   { httpApiStatus: 503 },
 ) {}
 
+/**
+ * The server's database can't be used right now, so the request could not be saved. Safe to retry once it recovers.
+ * Any endpoint can answer with it, so no endpoint declares it: the server responds with this body directly.
+ */
+export class StorageUnavailableError extends Schema.TaggedError<StorageUnavailableError>()(
+  "StorageUnavailableError",
+  {
+    message: Schema.String,
+    // The database's own description of the failure, such as "database or disk is full".
+    reason: Schema.String,
+  },
+  { httpApiStatus: 503 },
+) {}
+
 export class UnknownError extends Schema.TaggedError<UnknownError>()(
   "UnknownError",
   {

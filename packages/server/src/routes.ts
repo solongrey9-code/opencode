@@ -32,6 +32,7 @@ import { LocationActivity } from "@opencode/core/location-activity"
 import { ModelsDev } from "@opencode/core/models-dev"
 import { SessionRestart } from "@opencode/core/session/execution/restart"
 import { Schedule } from "@opencode/core/schedule"
+import { StorageStatus } from "@opencode/core/storage-status"
 import { PluginUpdate } from "@opencode/core/plugin/update"
 import { SdkPlugins } from "@opencode/core/plugin/sdk"
 import { WellKnown } from "@opencode/core/wellknown"
@@ -47,6 +48,7 @@ import { CorsConfig } from "./cors"
 import { handlers } from "./handlers"
 import { authorizationLayer } from "./middleware/authorization"
 import { schemaErrorLayer } from "./middleware/schema-error"
+import { storageErrorLayer } from "./middleware/storage-error"
 import { ServerPairing } from "./pairing"
 import { layer } from "./location"
 import { formLocationLayer } from "./middleware/form-location"
@@ -59,6 +61,7 @@ const applicationServiceNodes = [
   Global.node,
   FSUtil.node,
   Database.node,
+  StorageStatus.node,
   KV.node,
   Bus.node,
   // Before the jobs and sessions, so they are released after them: a shutdown's interrupted shell calls and jobs
@@ -200,6 +203,7 @@ function makeRoutes<AuthError, AuthServices>(
         Layer.provide(schemaErrorLayer),
         Layer.provide(auth),
         HttpRouter.provideRequest(requestServices),
+        Layer.merge(storageErrorLayer),
         Layer.provideMerge(services),
         Layer.provideMerge(HttpRouter.layer),
       )

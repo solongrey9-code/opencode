@@ -44,7 +44,7 @@
             }
           }
         },
-        "description": "Return the server identity, connection URLs, paths, and readiness status.",
+        "description": "Return the server identity, connection URLs, paths, readiness status, and storage health.",
         "summary": "Get server info"
       }
     },
@@ -10170,6 +10170,7 @@
                     "form.cancelled",
                     "websearch.updated",
                     "artifact.updated",
+                    "server.storage.updated",
                     "session.status",
                     "session.idle",
                     "tui.prompt.append",
@@ -10281,6 +10282,7 @@
                           "form.cancelled",
                           "websearch.updated",
                           "artifact.updated",
+                          "server.storage.updated",
                           "session.status",
                           "session.idle",
                           "tui.prompt.append",
@@ -22843,6 +22845,16 @@
                 "type": "null"
               }
             ]
+          },
+          "storage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Storage.Status"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": ["version", "pid", "urls", "paths"],
@@ -25065,6 +25077,39 @@
       "Snapshot.ID": {
         "type": "string"
       },
+      "Storage.Status": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok", "unavailable"]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The database's own description of the failure, such as 'database or disk is full'"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When writes started failing, in milliseconds since the Unix epoch"
+          }
+        },
+        "required": ["status"],
+        "additionalProperties": false
+      },
       "TokenUsage.Info": {
         "type": "object",
         "properties": {
@@ -25620,6 +25665,9 @@
           },
           {
             "$ref": "#/components/schemas/artifact.updated"
+          },
+          {
+            "$ref": "#/components/schemas/server.storage.updated"
           },
           {
             "$ref": "#/components/schemas/SessionStatusUpdated"
@@ -27304,6 +27352,62 @@
             "not": {
               "type": "null"
             }
+          }
+        },
+        "required": ["id", "created", "type", "data"],
+        "additionalProperties": false
+      },
+      "server.storage.updated": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Event.ID"
+          },
+          "created": {
+            "type": "number"
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["server.storage.updated"]
+          },
+          "location": {
+            "$ref": "#/components/schemas/Location.Ref"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["ok", "unavailable"]
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The database's own description of the failure, such as 'database or disk is full'"
+              },
+              "since": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "When writes started failing, in milliseconds since the Unix epoch"
+              }
+            },
+            "required": ["status"],
+            "additionalProperties": false
           }
         },
         "required": ["id", "created", "type", "data"],

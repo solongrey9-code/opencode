@@ -1,3 +1,4 @@
+import { Storage } from "@opencode/schema/storage"
 import { Schema } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api"
 import { UnauthorizedError } from "../errors.js"
@@ -18,6 +19,9 @@ export const ServerInfo = Schema.Struct({
       persistentPty: Schema.optional(Schema.Boolean),
     }),
   ),
+  // Whether the server can save right now. Changes arrive as `server.storage.updated`; this is for clients that
+  // connect or reconnect after one. Absent while the server is starting and on servers that predate it.
+  storage: Schema.optional(Storage.Status),
 }).annotate({ identifier: "ServerInfo" })
 export type ServerInfo = typeof ServerInfo.Type
 
@@ -48,7 +52,7 @@ export const ServerGroup = HttpApiGroup.make("server.server")
       OpenApi.annotations({
         identifier: "server.info",
         summary: "Get server info",
-        description: "Return the server identity, connection URLs, paths, and readiness status.",
+        description: "Return the server identity, connection URLs, paths, readiness status, and storage health.",
       }),
     ),
   )

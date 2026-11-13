@@ -28,6 +28,8 @@ Material local adaptations include:
 - suppressed statement tracing beneath the database operation boundary
 - explicit SQLite transactions and savepoints
 - native transaction delegation for Durable Object SQLite
+- a failed rollback never replaces the transaction body's error (SQLite rolls
+  back by itself on errors such as `SQLITE_FULL`)
 - deliberate query-builder variance annotations
 
 Preserve these adaptations when comparing or synchronizing upstream code.

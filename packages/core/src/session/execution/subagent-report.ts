@@ -36,6 +36,13 @@ export type Inbox = {
   }) => Effect.Effect<unknown, SessionInbox.LifecycleConflict>
 }
 
+/** Who a settlement reports to, for logs: a failure otherwise names only the Session that settled. */
+export type Ids = {
+  readonly childSessionID?: SessionSchema.ID
+  readonly parentSessionID?: SessionSchema.ID
+  readonly notificationID?: SessionMessage.ID
+}
+
 type PostCommit =
   | { readonly type: "none" }
   | { readonly type: "cleanup"; readonly notificationID: SessionMessage.ID }
@@ -139,6 +146,7 @@ export const make = (deps: Deps) => {
       return {
         commit: () => deps.store.release(sessionID),
         deliver: Effect.void,
+        ids: (): Ids => ({}),
       }
     }
     const running = initial?.parentID
@@ -195,7 +203,19 @@ export const make = (deps: Deps) => {
       }),
     )
 
-    return { commit, deliver }
+    // Read after the commit ran: a foreground subagent's notification ID only exists from then on.
+    const ids = (): Ids => ({
+      childSessionID: sessionID,
+      parentSessionID: jobState.mode === "background" ? jobState.recovery.parentSessionID : initial?.parentID,
+      notificationID:
+        box.postCommit.type === "deliver"
+          ? box.postCommit.report.notificationID
+          : jobState.mode === "background"
+            ? jobState.notificationID
+            : undefined,
+    })
+
+    return { commit, deliver, ids }
   })
 
   return { started, clear, prepare }

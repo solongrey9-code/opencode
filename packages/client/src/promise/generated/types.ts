@@ -1,13 +1,6 @@
 export type JsonValue = null | boolean | number | string | Array<JsonValue> | { [key: string]: JsonValue }
 
-export type ServerInfo = {
-  version: string
-  pid: number
-  hostname?: string | undefined
-  urls: Array<string>
-  paths: { tmp: string }
-  capabilities?: { persistentPty?: boolean | undefined } | undefined
-}
+export type StorageStatus = { status: "ok" | "unavailable"; reason?: string | undefined; since?: number | undefined }
 
 export type PairingCode = { code: string; expires_in: number }
 
@@ -381,6 +374,16 @@ export type ConfigModelReasoning =
   | { supported: true; toggle?: boolean; effort?: Array<string>; budget?: { min?: number; max?: number } }
 
 export type ConfigShellOption = { path: string; name: string; acceptable: boolean }
+
+export type ServerInfo = {
+  version: string
+  pid: number
+  hostname?: string | undefined
+  urls: Array<string>
+  paths: { tmp: string }
+  capabilities?: { persistentPty?: boolean | undefined } | undefined
+  storage?: StorageStatus | undefined
+}
 
 export type LocationPublicRef = { directory: AbsolutePath }
 
@@ -2002,6 +2005,15 @@ export type ArtifactUpdated = {
   data: {}
 }
 
+export type ServerStorageUpdated = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "server.storage.updated"
+  location?: LocationRef
+  data: { status: "ok" | "unavailable"; reason?: string | undefined; since?: number | undefined }
+}
+
 export type SessionStatusUpdated = {
   id: EventID
   created: number
@@ -2973,6 +2985,7 @@ export type V2Event =
   | FormCancelled
   | WebsearchUpdated
   | ArtifactUpdated
+  | ServerStorageUpdated
   | SessionStatusUpdated
   | SessionIdle
   | TuiPromptAppend
@@ -4472,6 +4485,7 @@ export type EventSubscribeInput = {
         | "form.cancelled"
         | "websearch.updated"
         | "artifact.updated"
+        | "server.storage.updated"
         | "session.status"
         | "session.idle"
         | "tui.prompt.append"

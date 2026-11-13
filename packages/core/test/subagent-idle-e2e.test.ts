@@ -42,7 +42,7 @@ import { ShellSelect } from "@opencode/core/shell/select"
 import { makeGlobalNode, makeLocationNode } from "@opencode/util/effect/app-node"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Global } from "@opencode/util/global"
-import { Context, Deferred, Effect, Exit, Layer, Logger, Ref, Schedule, Schema, Scope } from "effect"
+import { Context, Deferred, Effect, Exit, Layer, Logger, Ref, References, Schedule, Schema, Scope } from "effect"
 import { tempGlobalLayer } from "./fixture/global"
 import { offlineModels } from "./fixture/models"
 import { tmpdirScoped } from "./fixture/tmpdir"
@@ -304,6 +304,19 @@ const waitForReports = Effect.fnUntraced(function* (
   ).toBeGreaterThanOrEqual(count)
   yield* app.sessions.wait(sessionID)
 })
+
+/** Error logs with their annotations, which is where a failed settlement says who it owed. */
+const recordErrors = () => {
+  const errors: { readonly message: string; readonly annotations: Record<string, unknown> }[] = []
+  const logger = Logger.make((options) => {
+    if (options.logLevel !== "Error") return
+    errors.push({
+      message: [options.message].flat().map(String).join(" "),
+      annotations: { ...options.fiber.getRef(References.CurrentLogAnnotations) },
+    })
+  })
+  return { errors, layer: Logger.layer([logger]) }
+}
 
 describe("subagent idle reports end to end", () => {
   e2e.live(
@@ -698,6 +711,90 @@ describe("subagent idle reports end to end", () => {
         expect(reports[0]!.metadata).toMatchObject({ source: "subagent", childID, state: "cancelled" })
         expect(errors).toEqual([])
       }).pipe(Effect.provide(Logger.layer([logger])))
+    },
+    30_000,
+  )
+
+  e2e.live(
+    "a failed report delivery logs the child, the parent and the notification",
+    () => {
+      const recorded = recordErrors()
+      return Effect.gen(function* () {
+        const crashed = yield* Deferred.make<void>()
+        const h = yield* harness({ inbox: crashInbox(crashed) })
+        yield* h.llm.serve(
+          script({
+            reviewer: [TestLLM.text("answer", "turn-1")],
+            build: [TestLLM.text("parent ack", "parent-1")],
+          }),
+        )
+        const launched = yield* h.call("call-launch")
+        const childID = outputSessionID(launched.metadata)
+        yield* Deferred.await(crashed)
+        yield* h.sessions.wait(childID)
+        yield* h.jobs.wait({ id: childID })
+        yield* h.execution.awaitIdle(childID)
+
+        const pending = yield* h.jobs.pendingBackground
+        expect(pending[0]?.notificationID).toBeString()
+        expect(recorded.errors.filter((error) => error.message.includes("Subagent report delivery failed"))).toEqual([
+          {
+            message: expect.any(String),
+            annotations: {
+              sessionID: childID,
+              childSessionID: childID,
+              parentSessionID: h.parent.id,
+              notificationID: pending[0]!.notificationID,
+            },
+          },
+        ])
+      }).pipe(Effect.provide(recorded.layer))
+    },
+    30_000,
+  )
+
+  e2e.live(
+    "a settlement that cannot be saved logs the child, the parent and the notification",
+    () => {
+      const recorded = recordErrors()
+      return Effect.gen(function* () {
+        const database = yield* tmpdirScoped()
+        const h = yield* harness({ database: path.join(database.path, "settlement.sqlite") })
+        yield* h.llm.serve(
+          script({
+            reviewer: [TestLLM.text("answer", "turn-1")],
+            build: [TestLLM.text("parent ack", "parent-1")],
+          }),
+        )
+        // Listeners run right after an event commits, so writes break between the child's last step
+        // and its terminal event: the settlement is the first thing that cannot be saved.
+        const armed = { on: true }
+        yield* Context.get(h.context, Bus.Service).listen((event) => {
+          if (event.type !== "session.step.ended" || !armed.on) return Effect.void
+          armed.on = false
+          return h.database.db.run("PRAGMA query_only = ON").pipe(Effect.orDie)
+        })
+        const launched = yield* h.call("call-launch")
+        const childID = outputSessionID(launched.metadata)
+        yield* h.execution.awaitIdle(childID)
+        yield* h.database.db.run("PRAGMA query_only = OFF").pipe(Effect.orDie)
+
+        const job = yield* h.jobs.get(childID)
+        expect(job?.notificationID).toBeString()
+        expect(
+          recorded.errors.filter((error) => error.message.includes("Failed to publish Session execution lifecycle")),
+        ).toEqual([
+          {
+            message: expect.any(String),
+            annotations: {
+              sessionID: childID,
+              childSessionID: childID,
+              parentSessionID: h.parent.id,
+              notificationID: job!.notificationID,
+            },
+          },
+        ])
+      }).pipe(Effect.provide(recorded.layer))
     },
     30_000,
   )

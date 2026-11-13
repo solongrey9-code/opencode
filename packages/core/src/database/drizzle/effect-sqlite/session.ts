@@ -186,13 +186,18 @@ export class EffectSQLiteSession<TRelations extends AnyRelations> extends SQLite
                             ),
                           )
                         : this.executeTransactionStatement(connection, `release savepoint effect_sql_${id}`)
-                      : id === 0
-                        ? this.executeTransactionStatement(connection, "rollback")
-                        : this.executeTransactionStatement(connection, `rollback to savepoint effect_sql_${id}`).pipe(
-                            Effect.andThen(
-                              this.executeTransactionStatement(connection, `release savepoint effect_sql_${id}`),
-                            ),
-                          )
+                      : (id === 0
+                          ? this.executeTransactionStatement(connection, "rollback")
+                          : this.executeTransactionStatement(connection, `rollback to savepoint effect_sql_${id}`).pipe(
+                              Effect.andThen(
+                                this.executeTransactionStatement(connection, `release savepoint effect_sql_${id}`),
+                              ),
+                            )
+                        ).pipe(
+                          // SQLite rolls the whole transaction back itself on errors such as SQLITE_FULL, so
+                          // this fails with "no transaction is active". Report the body's error, not that one.
+                          Effect.catch(() => Effect.void),
+                        )
 
                     return finalize.pipe(Effect.flatMap(() => exit))
                   }),

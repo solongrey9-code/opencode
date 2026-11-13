@@ -1,6 +1,6 @@
 export * as Bus from "./bus.js"
 
-import { Cause, Clock, Context, Effect, Layer, Option, PubSub, Schema, Stream } from "effect"
+import { Cause, Clock, Context, Effect, Exit, Layer, Option, PubSub, Schema, Stream } from "effect"
 import { Event } from "@opencode/schema/event"
 import type { EventLog } from "@opencode/schema/event-log"
 import { and, asc, eq, gt, lte, sql } from "drizzle-orm"
@@ -15,6 +15,8 @@ import { SessionEvent } from "@opencode/schema/session-event"
 import { SessionLegacy } from "@opencode/schema/session-legacy"
 import type { SessionID } from "@opencode/schema/session-id"
 import { AbsolutePath } from "@opencode/schema/schema"
+import { Storage } from "@opencode/schema/storage"
+import { StorageStatus } from "./storage-status.js"
 
 export type Subscriber<D extends Event.Definition = Event.Definition> = (event: Event.Payload<D>) => Effect.Effect<void>
 export type Unsubscribe = Effect.Effect<void>
@@ -193,7 +195,7 @@ interface Options {
 export function configured(options?: Options) {
   return makeGlobalNode({
     service: Service,
-    deps: [Database.node],
+    deps: [Database.node, StorageStatus.node],
     layer: Layer.effect(
       Service,
       Effect.gen(function* () {
@@ -210,6 +212,7 @@ export function configured(options?: Options) {
         const listeners = new Array<Subscriber>()
         const durableLocks = KeyedMutex.makeUnsafe<string>()
         const { db } = yield* Database.Service
+        const storage = yield* StorageStatus.Service
         const logReadPageSize = options?.logReadPageSize ?? 512
         const persist = options?.persist ?? false
         const sessions = new Map<SessionID, Location.Ref>()
@@ -286,6 +289,22 @@ export function configured(options?: Options) {
             )
           }),
         )
+
+        // The one place clients learn that durable writes fail: a failed write cannot commit the
+        // event that would say so. The status lives in memory and its event is ephemeral and
+        // unlocated, so announcing a change touches the database neither to read nor to write.
+        const trackStorage = <A, E>(write: Effect.Effect<A, E>) =>
+          write.pipe(
+            Effect.onExit((exit) =>
+              Effect.gen(function* () {
+                // A replay that found its event already stored commits without writing anything.
+                if (Exit.isSuccess(exit) && exit.value === undefined) return
+                const changed = Exit.isSuccess(exit) ? yield* storage.recovered : yield* storage.failed(exit.cause)
+                if (!changed) return
+                yield* notify(yield* makePayload(Storage.Event.Updated, changed, { global: true }), true)
+              }),
+            ),
+          )
 
         function commitDurableEvent(
           definition: Event.Definition,
@@ -433,7 +452,7 @@ export function configured(options?: Options) {
                       }),
                     { behavior: "immediate" },
                   )
-                  .pipe(Effect.orDie)
+                  .pipe(trackStorage, Effect.orDie)
                 if (committed) {
                   committed.route()
                   yield* Effect.forEach(
@@ -633,7 +652,7 @@ export function configured(options?: Options) {
                         }),
                       { behavior: "immediate" },
                     )
-                    .pipe(Effect.orDie)
+                    .pipe(trackStorage, Effect.orDie)
                   committed.route()
                   yield* Effect.forEach(
                     pubsub.durable.get(aggregateID) ?? [],

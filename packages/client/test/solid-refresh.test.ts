@@ -412,3 +412,63 @@ test("delayed metadata and family reads do not resurrect sessions deleted while 
     setup.dispose()
   }
 })
+
+test("storage status is read on connect and follows events, which win over a slower snapshot", async () => {
+  const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
+  const info = { pending: Promise.withResolvers<Response>(), requests: 0 }
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init)
+      if (new URL(request.url).pathname !== "/api/info")
+        return Response.json({ location: { directory: "/project" }, data: [] })
+      info.requests++
+      return info.pending.promise
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({
+      api: () => api,
+      directory: "/project",
+      event: {
+        on: () => () => {},
+        listen(handler) {
+          listeners.add(handler)
+          return () => listeners.delete(handler)
+        },
+      },
+      // Connecting also starts the other reads, which this server does not answer.
+      onError: () => {},
+    }),
+    dispose,
+  }))
+  const emit = (event: OpenCodeEvent) => listeners.forEach((listener) => listener({ name: event.type, details: event }))
+  const connect = () => emit({ id: "evt_connected", type: "server.connected", data: {} })
+  const answer = async (storage: { status: "ok" | "unavailable"; reason?: string; since?: number }) => {
+    const pending = info.pending
+    info.pending = Promise.withResolvers<Response>()
+    pending.resolve(Response.json({ version: "test", pid: 1, urls: [], paths: { tmp: "/tmp" }, storage }))
+    await pending.promise
+    await Bun.sleep(0)
+  }
+  const unavailable = { status: "unavailable" as const, reason: "database or disk is full", since: 5 }
+  try {
+    expect(setup.data.server.storage()).toBeUndefined()
+    // A client that connects during an outage never saw the event, so it reads the status.
+    connect()
+    await answer(unavailable)
+    expect(setup.data.server.storage()).toEqual(unavailable)
+
+    emit({ id: "evt_ok", created: 6, type: "server.storage.updated", data: { status: "ok" } })
+    expect(setup.data.server.storage()).toEqual({ status: "ok" })
+
+    // The snapshot was requested before the event that follows it, so it is the older fact.
+    connect()
+    emit({ id: "evt_full", created: 7, type: "server.storage.updated", data: unavailable })
+    await answer({ status: "ok" })
+    expect(setup.data.server.storage()).toEqual(unavailable)
+    expect(info.requests).toBe(2)
+  } finally {
+    setup.dispose()
+  }
+})

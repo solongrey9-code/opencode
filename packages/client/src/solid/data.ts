@@ -34,6 +34,7 @@ import type {
   SessionInboxCompaction,
   ShellInfo,
   SkillInfo,
+  StorageStatus,
   ToolContent,
   UsageLimitsInfo,
   VcsInfo,
@@ -144,6 +145,10 @@ type Store = {
     permission: Record<string, PermissionSavedInfo[]>
   }
   location: Record<string, LocationData>
+  server: {
+    // Whether the server can save right now. Undefined until read, and on servers that predate it.
+    storage?: StorageStatus
+  }
 }
 
 export function locationKey(location: LocationRef) {
@@ -347,7 +352,10 @@ export function createData(config: CreateDataInput) {
       permission: {},
     },
     location: {},
+    server: {},
   })
+  // Counts storage events so a snapshot requested before one arrived cannot overwrite it.
+  const storage = { events: 0 }
 
   const [defaultLocation, setDefaultLocation] = createSignal<LocationRef>({ directory: config.directory })
   const sessions = createMemo(() =>
@@ -776,8 +784,23 @@ export function createData(config: CreateDataInput) {
         )
         refresh(() => result.location.vcs.sync())
         refresh(() => result.project.sync())
+        // Storage changes are not replayed, so a client that connects during an outage reads the current status.
+        const seen = storage.events
+        refresh(() =>
+          api()
+            .server.info()
+            .then((info) => {
+              if (storage.events === seen) setStore("server", reconcile({ storage: info.storage }))
+            })
+            // Advisory: a server without the endpoint or a failed read just leaves the status unknown.
+            .catch(() => {}),
+        )
         return
       }
+      case "server.storage.updated":
+        storage.events++
+        setStore("server", reconcile({ storage: event.data }))
+        return
       case "project.updated":
         setStore("project", "info", event.data.id, reconcile(event.data))
         return
@@ -2100,6 +2123,11 @@ export function createData(config: CreateDataInput) {
         invalidate(projectID: string) {
           sync.invalidate(`project.permission:${projectID}`)
         },
+      },
+    },
+    server: {
+      storage() {
+        return store.server.storage
       },
     },
     shell: {

@@ -61,13 +61,17 @@ export const layer = Layer.effect(
     const jobs = yield* Job.Service
     const inbox = yield* SessionInbox.Service
     const db = (yield* Database.Service).db
-    const reportLifecycle = <A>(sessionID: SessionSchema.ID, effect: Effect.Effect<A>) =>
+    const reportLifecycle = <A>(
+      sessionID: SessionSchema.ID,
+      effect: Effect.Effect<A>,
+      ids: () => SubagentReport.Ids = () => ({}),
+    ) =>
       effect.pipe(
         Effect.tapCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.void
             : Effect.logError("Failed to publish Session execution lifecycle", cause).pipe(
-                Effect.annotateLogs({ sessionID }),
+                Effect.annotateLogs({ sessionID, ...ids() }),
               ),
         ),
         Effect.asVoid,
@@ -147,8 +151,11 @@ export const layer = Layer.effect(
         ),
       drain: (sessionID, force, promotable) => drain(sessionID, force, undefined, promotable),
       // One terminal observation per busy period, covering every coalesced drain.
-      settled: (sessionID, exit, reason) =>
-        reportLifecycle(
+      settled: (sessionID, exit, reason) => {
+        // Set once the settlement is prepared, so a failure after that names the parent that is owed
+        // the report and the notification it would have received.
+        const owed: { ids: () => SubagentReport.Ids } = { ids: () => ({}) }
+        return reportLifecycle(
           sessionID,
           Effect.gen(function* () {
             const outcome = terminal(exit, reason)
@@ -160,15 +167,21 @@ export const layer = Layer.effect(
             }
             // Claim the Job generation before cancelling it so the settlement commit owns its outbox row.
             const settlement = yield* subagentReport.prepare(sessionID, outcome)
+            owed.ids = settlement.ids
             if (outcome.type === "interrupted") yield* jobs.cancel(sessionID)
             yield* publishTerminal(bus, sessionID, outcome, settlement.commit)
             // Post-commit delivery is best effort: a retained outbox marker is recovered on the
             // next restart, and a delivery defect must not fail the settled hook.
-            yield* settlement.deliver.pipe(
-              Effect.ignoreCause({ log: "Error", message: "Subagent report delivery failed" }),
+            yield* Effect.suspend(() =>
+              settlement.deliver.pipe(
+                Effect.ignoreCause({ log: "Error", message: "Subagent report delivery failed" }),
+                Effect.annotateLogs({ sessionID, ...settlement.ids() }),
+              ),
             )
           }),
-        ),
+          () => owed.ids(),
+        )
+      },
     })
     holder.coordinator = coordinator
 
