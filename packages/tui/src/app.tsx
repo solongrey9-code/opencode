@@ -56,6 +56,7 @@ import { ClientProvider, useClient } from "./context/client"
 import { StartupLoading } from "./component/startup-loading"
 import { DevToolsBar } from "./component/devtools-bar"
 import { Reconnecting } from "./component/reconnecting"
+import { StorageBanner } from "./component/storage-banner"
 import { MigrationOverlay } from "./component/migration-overlay"
 import { DataProvider, useData } from "./context/data"
 import { SessionTabsProvider, useSessionTabs } from "./context/session-tabs"
@@ -1421,6 +1422,7 @@ function App() {
         if (copyOnSelectEnabled()) Selection.copyOnSelectRelease(event, renderer, toast, clipboard)
       }}
     >
+      <StorageBanner />
       <box
         flexGrow={1}
         minHeight={0}
